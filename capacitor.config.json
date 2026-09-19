@@ -1,0 +1,9 @@
+{
+  "appId": "com.agrosave.precisionsprayer",
+  "appName": "AGRO SAVE",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  }
+}
