@@ -10,10 +10,12 @@ import {
   Check, 
   ArrowRight,
   ShieldAlert,
-  Sliders
+  Sliders,
+  AlertTriangle
 } from 'lucide-react';
 import { AiDoctorRemedy } from '../types';
 import { COMPREHENSIVE_AGRO_REMEDIES, diagnoseAgroQuery } from '../utils/aiDoctorEngine';
+import { speakAgroDoctorText, stopAgroDoctorSpeech, playAgroDoctorAudioFallback } from '../utils/audio';
 
 interface AiAgroDoctorProps {
   lang: 'EN' | 'HI';
@@ -34,152 +36,82 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isVoice2VoiceActive, setIsVoice2VoiceActive] = useState(true);
   const [lastTranscribed, setLastTranscribed] = useState<string>('');
+  const [micPermissionAlert, setMicPermissionAlert] = useState<string | null>(null);
 
-  // Persistent utterance ref to avoid Chrome garbage collection bug
-  const activeUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  // Persistent recognition ref
   const recognitionRef = useRef<any>(null);
 
-  // Preload and monitor available voices
+  // Preload available voices and inject ResponsiveVoice fallback for Android WebViews
   useEffect(() => {
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.getVoices();
-      const handleVoicesChanged = () => {
+    if (typeof window !== 'undefined') {
+      if ('speechSynthesis' in window) {
         window.speechSynthesis.getVoices();
-      };
-      window.speechSynthesis.onvoiceschanged = handleVoicesChanged;
+        const handleVoicesChanged = () => {
+          window.speechSynthesis.getVoices();
+        };
+        window.speechSynthesis.onvoiceschanged = handleVoicesChanged;
+      }
 
-      return () => {
-        if (window.speechSynthesis.speaking) {
-          window.speechSynthesis.cancel();
+      // Inject ResponsiveVoice for WebViews where speechSynthesis might be limited
+      if (!(window as unknown as { responsiveVoice?: unknown }).responsiveVoice) {
+        try {
+          const rvScript = document.createElement('script');
+          rvScript.src = 'https://code.responsivevoice.org/responsivevoice.js';
+          rvScript.async = true;
+          document.head.appendChild(rvScript);
+        } catch {
+          // Ignore script loading errors
         }
-      };
+      }
     }
+
+    return () => {
+      stopAgroDoctorSpeech();
+    };
   }, []);
 
   // Stop current active speech playback cleanly
   const stopSpeaking = () => {
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-    activeUtteranceRef.current = null;
+    stopAgroDoctorSpeech();
     setIsSpeaking(false);
   };
 
-  // Play auditory tone chime for immediate feedback
+  // Play auditory tone chime for immediate user feedback
   const playAudioCue = (freq = 600, durationMs = 120) => {
-    try {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!AudioCtx) return;
-      const ctx = new AudioCtx();
-      if (ctx.state === 'suspended') {
-        ctx.resume();
-      }
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(freq, ctx.currentTime);
-      gain.gain.setValueAtTime(0.08, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + durationMs / 1000);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + durationMs / 1000);
-    } catch {
-      // AudioContext unavailable or blocked
-    }
+    playAgroDoctorAudioFallback([freq]);
   };
 
   // Full Text-to-Speech (TTS) Voice Engine
   const speakText = (text: string) => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-      if (onStatusChange) onStatusChange('Speech synthesis is not supported in this browser');
+    if (isSpeaking) {
+      stopSpeaking();
       return;
     }
 
-    try {
-      // If currently speaking, toggle off immediately
-      if (window.speechSynthesis.speaking && isSpeaking) {
-        stopSpeaking();
-        return;
-      }
+    playAudioCue(540, 90);
 
-      // Cancel previous playback
-      window.speechSynthesis.cancel();
-      if (window.speechSynthesis.paused) {
-        window.speechSynthesis.resume();
-      }
-
-      playAudioCue(540, 90);
-
-      // Clean speech text for natural human pronunciation
-      const cleanText = text
-        .replace(/[*#_`~]/g, ' ')
-        .replace(/[🌾🟡🐛🧪🪰🌿🍂🌽💡⚠️✓⚡🎯💧⏱️]/gu, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-
-      if (!cleanText) return;
-
-      // Chrome async cancel fix: start speech after short delay
-      setTimeout(() => {
-        try {
-          const utterance = new SpeechSynthesisUtterance(cleanText);
-          const isHindi = lang === 'HI';
-          utterance.lang = isHindi ? 'hi-IN' : 'en-IN';
-          utterance.rate = isHindi ? 0.92 : 0.96;
-          utterance.pitch = 1.0;
-
-          // Intelligent voice selection prioritizing Indian languages
-          const voices = window.speechSynthesis.getVoices();
-          if (voices && voices.length > 0) {
-            if (isHindi) {
-              const hiVoice = voices.find(v => v.lang === 'hi-IN' || v.lang.startsWith('hi') || v.name.toLowerCase().includes('hindi')) ||
-                              voices.find(v => v.lang.includes('IN'));
-              if (hiVoice) utterance.voice = hiVoice;
-            } else {
-              const enVoice = voices.find(v => v.lang === 'en-IN' || v.name.toLowerCase().includes('india')) ||
-                              voices.find(v => v.lang.startsWith('en'));
-              if (enVoice) utterance.voice = enVoice;
-            }
-          }
-
-          utterance.onstart = () => {
-            setIsSpeaking(true);
-            if (onStatusChange) {
-              onStatusChange(lang === 'HI' ? 'वॉइस सहायक बोल रहा है...' : 'Voice Assistant speaking...');
-            }
-          };
-
-          utterance.onend = () => {
-            setIsSpeaking(false);
-            activeUtteranceRef.current = null;
-          };
-
-          utterance.onerror = (event) => {
-            // Only warn if not intentionally canceled
-            if (event.error !== 'canceled' && event.error !== 'interrupted') {
-              console.warn('Speech synthesis error:', event);
-            }
-            setIsSpeaking(false);
-            activeUtteranceRef.current = null;
-          };
-
-          activeUtteranceRef.current = utterance;
-          window.speechSynthesis.speak(utterance);
-        } catch (err) {
-          console.warn('Speak error inside timeout:', err);
-          setIsSpeaking(false);
+    speakAgroDoctorText(text, {
+      lang,
+      onStart: () => {
+        setIsSpeaking(true);
+        if (onStatusChange) {
+          onStatusChange(lang === 'HI' ? 'वॉइस सहायक बोल रहा है...' : 'Voice Assistant speaking...');
         }
-      }, 50);
-
-    } catch (err) {
-      console.warn('Speech synthesis exception:', err);
-      setIsSpeaking(false);
-    }
+      },
+      onEnd: () => {
+        setIsSpeaking(false);
+      },
+      onError: (err) => {
+        console.warn('Speech engine error:', err);
+        setIsSpeaking(false);
+      }
+    });
   };
 
-  // Trigger Speech-to-Text (STT) Voice Recognition
-  const toggleListening = () => {
+  // Trigger Speech-to-Text (STT) Voice Recognition with robust permission check
+  const toggleListening = async () => {
+    setMicPermissionAlert(null);
+
     if (isListening) {
       if (recognitionRef.current) {
         try {
@@ -192,17 +124,34 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
       return;
     }
 
+    // Check for getUserMedia to proactively verify permission in Android WebView
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(track => track.stop());
+      } catch (permErr: any) {
+        if (permErr?.name === 'NotAllowedError' || permErr?.name === 'PermissionDeniedError') {
+          const alertMsg = lang === 'HI'
+            ? 'कृपया माइक की अनुमति दें (माइक एक्सेस अस्वीकृत है)। अपने फोन या ऐप सेटिंग्स में जाकर Microphone permission चालू करें।'
+            : 'Microphone permission required. Please allow audio access in your Android settings.';
+          setMicPermissionAlert(alertMsg);
+          if (onStatusChange) onStatusChange(lang === 'HI' ? 'माइक अनुमति आवश्यक है' : 'Microphone permission required');
+          return;
+        }
+      }
+    }
+
     const SpeechRecognition = (window as unknown as { SpeechRecognition?: any }).SpeechRecognition ||
                               (window as unknown as { webkitSpeechRecognition?: any }).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      // Fallback for browsers / sandboxes without Web Speech API
+      const alertMsg = lang === 'HI'
+        ? '⚠️ कृपया माइक की अनुमति दें या Google Speech Services चालू करें। आप नीचे दिए गए सुझाव बटन या कीबोर्ड से भी प्रश्न पूछ सकते हैं।'
+        : '⚠️ Microphone permission or Google Speech required. You can also tap the quick tags or type below.';
+      setMicPermissionAlert(alertMsg);
       const fallbackQuery = lang === 'HI' ? 'गेहूं में गुल्ली डंडा' : 'Phalaris weed wheat';
       setDoctorQuery(fallbackQuery);
       handleAskDoctor(fallbackQuery, true);
-      if (onStatusChange) {
-        onStatusChange(lang === 'HI' ? 'माइक्रोफोन असमर्थ: डिफ़ॉल्ट सवाल चुना गया' : 'Mic unavailable: Loaded sample query');
-      }
       return;
     }
 
@@ -218,6 +167,7 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
 
       recognition.onstart = () => {
         setIsListening(true);
+        setMicPermissionAlert(null);
         if (onStatusChange) {
           onStatusChange(lang === 'HI' ? 'बोलिए, मैं सुन रहा हूँ...' : 'Listening, speak now...');
         }
@@ -236,8 +186,22 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
       recognition.onerror = (err: any) => {
         console.warn('Speech recognition error:', err);
         setIsListening(false);
-        if (onStatusChange) {
-          onStatusChange(lang === 'HI' ? 'माइक एक्सेस अस्वीकृत या आवाज नहीं मिली' : 'Mic access denied or no speech detected');
+        if (err.error === 'not-allowed' || err.error === 'service-not-allowed') {
+          const alertMsg = lang === 'HI'
+            ? 'कृपया माइक की अनुमति दें / Microphone permission required (एंड्रॉइड सेटिंग्स में जाकर माइक्रोफोन परमिशन चालू करें)'
+            : 'Microphone permission required. Please allow microphone access in Android settings.';
+          setMicPermissionAlert(alertMsg);
+          if (onStatusChange) {
+            onStatusChange(lang === 'HI' ? 'माइक एक्सेस अस्वीकृत है' : 'Mic access denied');
+          }
+        } else if (err.error === 'no-speech') {
+          if (onStatusChange) {
+            onStatusChange(lang === 'HI' ? 'कोई आवाज नहीं मिली, पुनः प्रयास करें' : 'No speech detected, try again');
+          }
+        } else {
+          if (onStatusChange) {
+            onStatusChange(lang === 'HI' ? 'आवाज पहचानने में समस्या, कृपया पुनः प्रयास करें' : 'Speech error, please try again');
+          }
         }
       };
 
@@ -249,6 +213,11 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
     } catch (err) {
       console.warn('Recognition start exception:', err);
       setIsListening(false);
+      setMicPermissionAlert(
+        lang === 'HI'
+          ? 'कृपया माइक की अनुमति दें / Microphone permission required'
+          : 'Microphone permission required. Please check app permissions.'
+      );
     }
   };
 
@@ -396,6 +365,70 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
           {lang === 'HI' ? 'पूछें' : 'Ask'}
         </button>
       </div>
+
+      {/* Microphone Permission Polite Alert */}
+      {micPermissionAlert && (
+        <div id="mic-permission-alert" className="mb-2 p-2 bg-amber-50/95 border border-amber-300 rounded-lg text-amber-900 text-xs flex items-start justify-between gap-2 shadow-2xs">
+          <div className="flex items-start space-x-2 min-w-0">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <div className="font-bold text-[11px] text-amber-950">
+                {lang === 'HI' ? '⚠️ कृपया माइक की अनुमति दें' : '⚠️ Microphone Permission Required'}
+              </div>
+              <div className="text-[10px] text-amber-900 leading-tight mt-0.5">
+                {micPermissionAlert}
+              </div>
+              <div className="mt-1.5 flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={toggleListening}
+                  className="px-2 py-0.5 bg-[#1B5E20] hover:bg-[#2E7D32] text-white rounded text-[9px] font-bold transition-all shadow-2xs"
+                >
+                  {lang === 'HI' ? 'पुनः प्रयास करें' : 'Try Again'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMicPermissionAlert(null)}
+                  className="text-amber-800 hover:text-amber-950 underline text-[9px]"
+                >
+                  {lang === 'HI' ? 'हटाएँ' : 'Dismiss'}
+                </button>
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setMicPermissionAlert(null)}
+            className="text-amber-600 hover:text-amber-900 font-bold p-0.5 text-xs"
+            aria-label="Close alert"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Real-time Voice Speaking Audio Indicator Banner */}
+      {isSpeaking && (
+        <div id="active-speech-banner" className="mb-2 px-2.5 py-1.5 bg-emerald-900 text-emerald-100 rounded-lg text-[10px] flex items-center justify-between gap-2 shadow-xs border border-emerald-700">
+          <div className="flex items-center space-x-2 min-w-0">
+            <div className="flex items-center space-x-0.5 shrink-0">
+              <span className="w-1 h-2 bg-emerald-400 rounded-full animate-pulse" />
+              <span className="w-1 h-3.5 bg-emerald-300 rounded-full animate-bounce" />
+              <span className="w-1 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
+            </div>
+            <span className="truncate font-medium">
+              {lang === 'HI' ? 'ऑडियो सलाह प्रसारित हो रही है...' : 'Speaking recommendation aloud...'}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={stopSpeaking}
+            className="shrink-0 px-2 py-0.5 bg-emerald-800 hover:bg-emerald-700 text-white text-[9px] font-bold rounded border border-emerald-600 transition-all shadow-2xs"
+          >
+            {lang === 'HI' ? 'रोकें (Stop)' : 'Stop'}
+          </button>
+        </div>
+      )}
 
       {/* Quick Tag Suggestions */}
       <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 scrollbar-none text-[10px]">

@@ -329,5 +329,6 @@ export const NetworkController: React.FC<NetworkControllerProps> = ({
   );
 };
 
+export { speakAgroDoctorText, stopAgroDoctorSpeech, playAgroDoctorAudioFallback } from '../utils/audio';
 export { AiAgroDoctor } from './AiAgroDoctor';
 export default NetworkController;

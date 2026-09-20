@@ -1,6 +1,6 @@
 {
   "name": "AGRO SAVE - Precision Sprayer",
   "description": "Android Studio Kotlin & XML source code and interactive IoT simulator for AGRO SAVE smart pesticide spraying kit.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
