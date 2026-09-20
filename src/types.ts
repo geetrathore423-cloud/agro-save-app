@@ -105,4 +105,8 @@ export interface AiDoctorRemedy {
   recommendedDosage: string;
   modeTipHi: string;
   modeTipEn: string;
+  suggestedMode?: 'WEED' | 'CROP' | 'UNIVERSAL';
+  nozzleType?: string;
+  sprayTiming?: string;
+  waterVolume?: string;
 }

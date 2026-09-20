@@ -329,4 +329,5 @@ export const NetworkController: React.FC<NetworkControllerProps> = ({
   );
 };
 
+export { AiAgroDoctor } from './AiAgroDoctor';
 export default NetworkController;

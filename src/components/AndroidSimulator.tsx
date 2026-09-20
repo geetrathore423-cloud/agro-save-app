@@ -30,11 +30,14 @@ import {
   Lock,
   Unlock,
   Clock,
-  AlertCircle
+  AlertCircle,
+  Square
 } from 'lucide-react';
 import { NetworkLog, OperationalSprayMode, CropItem, WeedItem, AiDoctorRemedy } from '../types';
-import { INDIAN_CROPS, INDIAN_WEEDS, AI_DOCTOR_REMEDIES } from '../data/androidCode';
+import { INDIAN_CROPS, INDIAN_WEEDS } from '../data/androidCode';
+import { COMPREHENSIVE_AGRO_REMEDIES, diagnoseAgroQuery } from '../utils/aiDoctorEngine';
 import { startSpraySound, stopSpraySound } from '../utils/audio';
+import { AiAgroDoctor } from './AiAgroDoctor';
 
 interface AndroidSimulatorProps {
   onAddLog: (log: Omit<NetworkLog, 'id' | 'timestamp'>) => void;
@@ -61,12 +64,6 @@ export const AndroidSimulator: React.FC<AndroidSimulatorProps> = ({
 }) => {
   // Dual Language State
   const [lang, setLang] = useState<'HI' | 'EN'>('HI');
-
-  // AI Agro-Doctor State
-  const [doctorQuery, setDoctorQuery] = useState('');
-  const [activeRemedy, setActiveRemedy] = useState<AiDoctorRemedy | null>(AI_DOCTOR_REMEDIES[0]);
-  const [isListening, setIsListening] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
 
   // App & Hardware States
   const [isConnected, setIsConnected] = useState(true);
@@ -101,99 +98,6 @@ export const AndroidSimulator: React.FC<AndroidSimulatorProps> = ({
   const [isSpraying, setIsSpraying] = useState(false);
   const [statusLog, setStatusLog] = useState('तैयार (System Ready • Mode 1 Active)');
   const [isSoundEnabled, setIsSoundEnabled] = useState(true);
-
-  // Speech Synthesis TTS Helper
-  const speakText = (text: string) => {
-    if (!('speechSynthesis' in window)) return;
-    try {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = lang === 'HI' ? 'hi-IN' : 'en-US';
-      utterance.rate = 0.95;
-      utterance.onstart = () => setIsSpeaking(true);
-      utterance.onend = () => setIsSpeaking(false);
-      utterance.onerror = () => setIsSpeaking(false);
-      window.speechSynthesis.speak(utterance);
-    } catch {
-      setIsSpeaking(false);
-    }
-  };
-
-  // Speech-to-Text STT Helper
-  const toggleListening = () => {
-    if (isListening) {
-      setIsListening(false);
-      return;
-    }
-
-    const SpeechRecognition = (window as unknown as { SpeechRecognition?: any; webkitSpeechRecognition?: any }).SpeechRecognition || 
-                              (window as unknown as { webkitSpeechRecognition?: any }).webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      // Fallback if browser doesn't support Web Speech API
-      const fallbackQuery = lang === 'HI' ? 'गेहूं में गुल्ली डंडा' : 'Phalaris minor weed in wheat';
-      setDoctorQuery(fallbackQuery);
-      handleAskDoctor(fallbackQuery);
-      return;
-    }
-
-    try {
-      const recognition = new SpeechRecognition();
-      recognition.lang = lang === 'HI' ? 'hi-IN' : 'en-IN';
-      recognition.interimResults = false;
-      recognition.maxAlternatives = 1;
-
-      recognition.onstart = () => setIsListening(true);
-      recognition.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript;
-        setDoctorQuery(transcript);
-        handleAskDoctor(transcript);
-      };
-      recognition.onerror = () => setIsListening(false);
-      recognition.onend = () => setIsListening(false);
-      recognition.start();
-    } catch {
-      setIsListening(false);
-    }
-  };
-
-  // Search & Remedy matching
-  const handleAskDoctor = (overrideQuery?: string) => {
-    const q = (overrideQuery ?? doctorQuery).trim().toLowerCase();
-    if (!q) return;
-
-    const matched = AI_DOCTOR_REMEDIES.find(remedy => 
-      remedy.keywords.some(k => q.includes(k.toLowerCase())) ||
-      remedy.questionEn.toLowerCase().includes(q) ||
-      remedy.questionHi.toLowerCase().includes(q)
-    );
-
-    if (matched) {
-      setActiveRemedy(matched);
-      const answer = lang === 'HI' ? matched.answerHi : matched.answerEn;
-      if (isSoundEnabled) {
-        speakText(answer);
-      }
-    } else {
-      // Fallback advice
-      const fallbackRemedy: AiDoctorRemedy = {
-        id: 'general_advisory',
-        keywords: [],
-        questionHi: `प्रश्न: ${overrideQuery ?? doctorQuery}`,
-        questionEn: `Query: ${overrideQuery ?? doctorQuery}`,
-        answerHi: 'सटीक रासायनिक उपचार एवं परामर्श हेतु नजदीकी कृषि विज्ञान केंद्र (KVK) अथवा टोल-फ्री किसान कॉल सेंटर 1800-180-1551 पर संपर्क करें। सुरक्षित छिड़काव हेतु AGRO SAVE मोड 1 (खरपतवार मारक) या मोड 2 (पर्णीय पोषण) चुनें।',
-        answerEn: 'For personalized diagnosis, consult your local Krishi Vigyan Kendra (KVK) or Kisan Call Center at 1800-180-1551. Choose Mode 1 for weed control or Mode 2 for foliar feeding.',
-        recommendedChemical: 'CIBRC Certified Formulation',
-        recommendedDosage: '150-200 L Water / Acre',
-        modeTipHi: 'नोज़ल को 45 डिग्री कोण पर रखें ताकि दवा पत्तियों पर समान रूप से पहुंचे।',
-        modeTipEn: 'Maintain 45 degree nozzle angle for optimal foliage spray penetration.'
-      };
-      setActiveRemedy(fallbackRemedy);
-      if (isSoundEnabled) {
-        speakText(lang === 'HI' ? fallbackRemedy.answerHi : fallbackRemedy.answerEn);
-      }
-    }
-  };
 
   // Dynamic chemical calculation
   const estimatedChemicalVolume = (landAreaHa * selectedCrop.standardDosageLitersPerHectare).toFixed(2);
@@ -450,147 +354,12 @@ export const AndroidSimulator: React.FC<AndroidSimulatorProps> = ({
       <main className="w-full p-3 space-y-3 pb-8">
             
             {/* 0. AI AGRO-DOCTOR & VOICE ASSISTANT CARD (BILINGUAL & VOICE-ENABLED) */}
-            <div className="bg-gradient-to-br from-emerald-50 to-white rounded-xl p-3 shadow-sm border border-emerald-900/15">
-              <div className="flex items-center justify-between mb-1.5">
-                <div className="flex items-center space-x-1.5 font-bold text-[#1B5E20] text-xs">
-                  <Bot className="w-4 h-4 text-emerald-700" />
-                  <span>{lang === 'HI' ? 'एआई एग्रो-डॉक्टर व वॉइस सहायक' : 'AI Agro-Doctor & Voice Assistant'}</span>
-                </div>
-                <div className="flex items-center space-x-1 bg-emerald-100/80 px-2 py-0.5 rounded-full text-[9px] font-bold text-emerald-900">
-                  <Sparkles className="w-2.5 h-2.5 text-amber-600" />
-                  <span>{isListening ? (lang === 'HI' ? 'सुन रहा हूँ...' : 'Listening...') : isSpeaking ? (lang === 'HI' ? 'बोल रहा हूँ...' : 'Speaking...') : 'Voice 2 Voice'}</span>
-                </div>
-              </div>
-
-              <p className="text-[10px] text-neutral-600 mb-2 leading-tight">
-                {lang === 'HI' 
-                  ? 'फसल रोग, कीट, खरपतवार या कीटनाशक खुराक की तुरंत जानकारी पाएं' 
-                  : 'Get instant diagnosis & pesticide doses for weeds, pests, and crop diseases'}
-              </p>
-
-              {/* Search & Voice Input Bar */}
-              <div className="flex items-center space-x-1.5 mb-2">
-                <div className="relative flex-1">
-                  <input
-                    type="text"
-                    value={doctorQuery}
-                    onChange={(e) => setDoctorQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleAskDoctor();
-                    }}
-                    placeholder={lang === 'HI' ? 'रोग या खरपतवार का नाम लिखें...' : 'Ask disease, pest, or weed...'}
-                    className="w-full pl-7 pr-2 py-1.5 text-xs bg-white border border-emerald-700/30 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-700 text-neutral-800 placeholder:text-neutral-400"
-                  />
-                  <Search className="w-3.5 h-3.5 text-neutral-400 absolute left-2 top-2" />
-                </div>
-
-                {/* Voice Mic Button */}
-                <button
-                  type="button"
-                  onClick={toggleListening}
-                  className={`p-1.5 rounded-lg border transition-all active:scale-95 flex items-center justify-center ${
-                    isListening 
-                      ? 'bg-red-600 border-red-700 text-white animate-pulse' 
-                      : 'bg-[#1B5E20] border-[#1B5E20] text-white hover:bg-[#2E7D32]'
-                  }`}
-                  title={lang === 'HI' ? 'बोलकर पूछें (Voice Mic)' : 'Ask with Voice Mic'}
-                >
-                  {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-                </button>
-
-                {/* Ask Button */}
-                <button
-                  type="button"
-                  onClick={() => handleAskDoctor()}
-                  className="px-2.5 py-1.5 bg-[#2E7D32] hover:bg-[#1B5E20] text-white text-[11px] font-bold rounded-lg transition-all active:scale-95 shadow-xs"
-                >
-                  {lang === 'HI' ? 'पूछें' : 'Ask'}
-                </button>
-              </div>
-
-              {/* Quick Query Suggestion Chips */}
-              <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 scrollbar-none text-[10px]">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const q = lang === 'HI' ? 'गुल्ली डंडा' : 'Phalaris weed';
-                    setDoctorQuery(q);
-                    handleAskDoctor(q);
-                  }}
-                  className="whitespace-nowrap px-2 py-0.5 rounded-full border border-emerald-300 bg-white text-emerald-800 hover:bg-emerald-50 active:scale-95 transition-all"
-                >
-                  🌾 {lang === 'HI' ? 'गुल्ली डंडा' : 'Phalaris Weed'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const q = lang === 'HI' ? 'पीला रतुआ गेहूं' : 'Wheat Yellow Rust';
-                    setDoctorQuery(q);
-                    handleAskDoctor(q);
-                  }}
-                  className="whitespace-nowrap px-2 py-0.5 rounded-full border border-emerald-300 bg-white text-emerald-800 hover:bg-emerald-50 active:scale-95 transition-all"
-                >
-                  🟡 {lang === 'HI' ? 'पीला रतुआ' : 'Yellow Rust'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const q = lang === 'HI' ? 'गुलाबी सुंडी कपास' : 'Pink bollworm cotton';
-                    setDoctorQuery(q);
-                    handleAskDoctor(q);
-                  }}
-                  className="whitespace-nowrap px-2 py-0.5 rounded-full border border-emerald-300 bg-white text-emerald-800 hover:bg-emerald-50 active:scale-95 transition-all"
-                >
-                  🐛 {lang === 'HI' ? 'गुलाबी सुंडी' : 'Bollworm'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const q = lang === 'HI' ? 'नैनो यूरिया छिड़काव' : 'Nano urea spray dose';
-                    setDoctorQuery(q);
-                    handleAskDoctor(q);
-                  }}
-                  className="whitespace-nowrap px-2 py-0.5 rounded-full border border-emerald-300 bg-white text-emerald-800 hover:bg-emerald-50 active:scale-95 transition-all"
-                >
-                  🧪 {lang === 'HI' ? 'नैनो यूरिया' : 'Nano Urea'}
-                </button>
-              </div>
-
-              {/* Doctor Diagnostic Remedy Box */}
-              {activeRemedy && (
-                <div className="mt-2.5 bg-white border border-emerald-200 rounded-lg p-2.5 shadow-xs">
-                  <div className="flex items-start justify-between gap-1 mb-1">
-                    <span className="text-[11px] font-bold text-[#1B5E20] leading-snug">
-                      {lang === 'HI' ? activeRemedy.questionHi : activeRemedy.questionEn}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => speakText(lang === 'HI' ? activeRemedy.answerHi : activeRemedy.answerEn)}
-                      className="shrink-0 flex items-center space-x-1 px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 hover:bg-emerald-100 text-[10px] font-bold border border-emerald-200"
-                      title="Listen with TTS / ऑडियो सुनें"
-                    >
-                      <Volume2 className={`w-3 h-3 ${isSpeaking ? 'text-amber-600 animate-bounce' : 'text-emerald-700'}`} />
-                      <span>{isSpeaking ? (lang === 'HI' ? 'चल रहा है' : 'Playing') : (lang === 'HI' ? 'सुनाएं' : 'Listen')}</span>
-                    </button>
-                  </div>
-
-                  <p className="text-[11px] text-neutral-800 leading-relaxed mb-2">
-                    {lang === 'HI' ? activeRemedy.answerHi : activeRemedy.answerEn}
-                  </p>
-
-                  <div className="space-y-1">
-                    <div className="text-[10px] font-semibold bg-emerald-50 text-emerald-900 border border-emerald-200 rounded px-2 py-1 flex items-center justify-between">
-                      <span>🧪 {activeRemedy.recommendedChemical}</span>
-                      <span className="font-mono text-emerald-700">{activeRemedy.recommendedDosage}</span>
-                    </div>
-
-                    <div className="text-[10px] text-[#1B5E20] font-medium bg-amber-50 border border-amber-200 rounded px-2 py-1">
-                      💡 {lang === 'HI' ? activeRemedy.modeTipHi : activeRemedy.modeTipEn}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
+            <AiAgroDoctor 
+              lang={lang} 
+              effectiveMode={effectiveMode} 
+              onSetHardwareMode={(mode) => handleExecuteSetMode(mode)} 
+              onStatusChange={(status) => setStatusLog(status)} 
+            />
             
             {/* 1. MACHINE STATUS & BATTERY TELEMETRY CARD */}
             <div id="simulator-battery-health-card" className="bg-white rounded-xl p-3 shadow-sm border border-emerald-900/10">
