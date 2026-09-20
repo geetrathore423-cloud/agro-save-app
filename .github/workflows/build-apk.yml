@@ -2,48 +2,30 @@ name: Build Android APK
 
 on:
   push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
+    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
-  build-apk:
-    name: Build Debug APK
+  build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Node.js 22
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
-      - name: Set up Java 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
+      - name: Install Dependencies
+        run: |
+          npm install --legacy-peer-deps
+          npm rebuild @tailwindcss/oxide
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Rebuild Tailwind CSS oxide
-        run: npm rebuild @tailwindcss/oxide
-
-      - name: Build web app
+      - name: Build Web Assets
         run: npm run build
 
       - name: Ensure @capacitor/android is installed
-        run: |
-          CAP_VERSION=$(node -p "require('./node_modules/@capacitor/core/package.json').version")
-          npm ls @capacitor/android >/dev/null 2>&1 || npm install @capacitor/android@$CAP_VERSION --no-save
+        run: npm install @capacitor/android@latest --no-save
 
       - name: Add Android platform if missing
         run: |
@@ -55,17 +37,27 @@ jobs:
       - name: Sync Capacitor
         run: npx cap sync android
 
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
       - name: Make gradlew executable
-        run: chmod +x android/gradlew
+        run: chmod +x android/gradlew || true
 
-      - name: Build debug APK
-        working-directory: android
-        run: ./gradlew assembleDebug --no-daemon
+      - name: Setup Gradle Wrapper & Build APK
+        run: |
+          cd android
+          if [ ! -f gradlew ]; then
+            gradle wrapper
+          fi
+          chmod +x gradlew
+          ./gradlew assembleDebug
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: agro-save-app-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
           
