@@ -126,10 +126,10 @@ export function playAgroDoctorAudioFallback(freqs: number[] = [523.25, 659.25, 7
 }
 
 export function speakAgroDoctorText(text: string, options: SpeechOptions = {}) {
-  const { lang = 'HI', onStart, onEnd } = options;
+  const { lang = 'HI', onStart, onEnd, onError } = options;
   const isHindi = lang === 'HI';
 
-  // 1. Stop any currently active speech queues first to avoid stuck buffers
+  // 1. FORCE SPEECH SYNTHESIS RESET BEFORE SPEAKING
   stopAgroDoctorSpeech();
 
   // Strip Markdown, emojis and special agro symbols for crisp pronunciation
@@ -144,9 +144,7 @@ export function speakAgroDoctorText(text: string, options: SpeechOptions = {}) {
     return;
   }
 
-  let hasStarted = false;
-
-  // 2. Try native window.speechSynthesis
+  // 2. Native window.speechSynthesis for Android WebView & Modern Browsers
   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
     try {
       if (window.speechSynthesis.paused) {
@@ -154,59 +152,100 @@ export function speakAgroDoctorText(text: string, options: SpeechOptions = {}) {
       }
 
       const utterance = new SpeechSynthesisUtterance(cleanText);
-      // Force speech synthesis voice language to hi-IN with fallback to en-IN
-      utterance.lang = isHindi ? 'hi-IN' : 'en-IN';
-      utterance.rate = isHindi ? 0.92 : 0.98;
-      utterance.pitch = 1.0;
 
-      // Intelligent Indian voice selection
+      // Voice selection: Hindi -> Indian English -> US English fallback
       const voices = window.speechSynthesis.getVoices();
-      if (voices && voices.length > 0) {
-        if (isHindi) {
-          const hiVoice = voices.find(v => v.lang === 'hi-IN' || v.lang.startsWith('hi') || v.name.toLowerCase().includes('hindi')) ||
-                          voices.find(v => v.lang.includes('IN'));
-          if (hiVoice) utterance.voice = hiVoice;
+      let selectedVoice: SpeechSynthesisVoice | null = null;
+      let selectedLang = 'en-US';
+
+      if (isHindi) {
+        // Step A: Search for Hindi voice
+        selectedVoice = voices.find(v => 
+          v.lang.toLowerCase().includes('hi-in') || 
+          v.lang.toLowerCase().startsWith('hi') || 
+          v.name.toLowerCase().includes('hindi')
+        ) || null;
+
+        if (selectedVoice) {
+          selectedLang = selectedVoice.lang || 'hi-IN';
         } else {
-          const enVoice = voices.find(v => v.lang === 'en-IN' || v.name.toLowerCase().includes('india')) ||
-                          voices.find(v => v.lang.startsWith('en'));
-          if (enVoice) utterance.voice = enVoice;
+          // Step B: Search for Indian English voice
+          selectedVoice = voices.find(v => 
+            v.lang.toLowerCase().includes('en-in') || 
+            v.name.toLowerCase().includes('india')
+          ) || null;
+
+          if (selectedVoice) {
+            selectedLang = selectedVoice.lang || 'en-IN';
+          } else {
+            // Step C: Fallback to standard English
+            selectedVoice = voices.find(v => 
+              v.lang.toLowerCase().includes('en-us') || 
+              v.lang.toLowerCase().startsWith('en')
+            ) || voices[0] || null;
+            selectedLang = selectedVoice?.lang || 'en-US';
+          }
         }
+      } else {
+        // English mode
+        selectedVoice = voices.find(v => 
+          v.lang.toLowerCase().includes('en-in') || 
+          v.name.toLowerCase().includes('india')
+        ) || voices.find(v => 
+          v.lang.toLowerCase().includes('en-us') || 
+          v.lang.toLowerCase().startsWith('en')
+        ) || voices[0] || null;
+        selectedLang = selectedVoice?.lang || 'en-US';
       }
 
+      if (selectedVoice) {
+        utterance.voice = selectedVoice;
+        utterance.lang = selectedLang;
+      } else {
+        utterance.lang = selectedLang;
+      }
+
+      // Rate 0.9 and pitch 1.0 for clear reading across all voices
+      utterance.rate = 0.9;
+      utterance.pitch = 1.0;
+
       utterance.onstart = () => {
-        hasStarted = true;
-        if (activeWatchdog) clearTimeout(activeWatchdog);
         if (onStart) onStart();
       };
 
       utterance.onend = () => {
-        if (activeWatchdog) clearTimeout(activeWatchdog);
         activeUtterance = null;
+        try {
+          (window as unknown as { __activeSpeechUtterance?: unknown }).__activeSpeechUtterance = null;
+        } catch {}
         if (onEnd) onEnd();
       };
 
       utterance.onerror = (e) => {
-        if (activeWatchdog) clearTimeout(activeWatchdog);
         activeUtterance = null;
-        // If canceled intentionally, do not treat as failure
+        try {
+          (window as unknown as { __activeSpeechUtterance?: unknown }).__activeSpeechUtterance = null;
+        } catch {}
         if (e.error === 'canceled' || e.error === 'interrupted') {
           if (onEnd) onEnd();
           return;
         }
+        if (onError) onError(e);
         tryFallbacks();
       };
 
+      // Store in references to prevent Chromium garbage-collection bug
       activeUtterance = utterance;
+      try {
+        (window as unknown as { __activeSpeechUtterance?: unknown }).__activeSpeechUtterance = utterance;
+      } catch {}
 
-      // Android WebView watchdog: if speech hasn't emitted onstart within 900ms, trigger fallbacks
-      activeWatchdog = setTimeout(() => {
-        if (!hasStarted) {
-          console.warn('[AgroSave] SpeechSynthesis did not start within 900ms in WebView, engaging fallback engine...');
-          tryFallbacks();
-        }
-      }, 900);
-
+      // 3. Direct synchronous trigger
       window.speechSynthesis.speak(utterance);
+
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+      }
       return;
     } catch (err) {
       console.warn('[AgroSave] SpeechSynthesis exception:', err);
@@ -218,12 +257,7 @@ export function speakAgroDoctorText(text: string, options: SpeechOptions = {}) {
   }
 
   function tryFallbacks() {
-    if (activeWatchdog) {
-      clearTimeout(activeWatchdog);
-      activeWatchdog = null;
-    }
-
-    // Fallback A: ResponsiveVoice API (works in Android WebViews)
+    // Fallback: ResponsiveVoice if available
     const rv = (window as unknown as { 
       responsiveVoice?: { 
         speak: (text: string, voice: string, callbacks: any) => void;
@@ -245,19 +279,16 @@ export function speakAgroDoctorText(text: string, options: SpeechOptions = {}) {
               if (onEnd) onEnd();
             },
             onerror: () => {
-              // Final fallback: Web Audio synthesized acoustic sequence
               playAgroDoctorAudioFallback();
               if (onEnd) onEnd();
             }
           }
         );
         return;
-      } catch {
-        // Continue to Web Audio fallback
-      }
+      } catch {}
     }
 
-    // Fallback B: Web Audio acoustic feedback so speaker activates in Android WebView
+    // Acoustic chime fallback
     playAgroDoctorAudioFallback();
     if (onStart) onStart();
     setTimeout(() => {

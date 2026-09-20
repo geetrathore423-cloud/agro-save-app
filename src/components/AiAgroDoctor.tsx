@@ -38,74 +38,196 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
   const [lastTranscribed, setLastTranscribed] = useState<string>('');
   const [micPermissionAlert, setMicPermissionAlert] = useState<string | null>(null);
 
+  // Persistent utterance ref to prevent Chrome/Android WebView garbage-collection bug
+  const activeUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+
   // Persistent recognition ref
   const recognitionRef = useRef<any>(null);
 
-  // Preload available voices and inject ResponsiveVoice fallback for Android WebViews
+  // Preload and monitor available voices for Android WebView
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      if ('speechSynthesis' in window) {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        // Pre-warm voices list
         window.speechSynthesis.getVoices();
+        
         const handleVoicesChanged = () => {
-          window.speechSynthesis.getVoices();
+          try {
+            window.speechSynthesis.getVoices();
+          } catch {}
         };
         window.speechSynthesis.onvoiceschanged = handleVoicesChanged;
-      }
 
-      // Inject ResponsiveVoice for WebViews where speechSynthesis might be limited
-      if (!(window as unknown as { responsiveVoice?: unknown }).responsiveVoice) {
-        try {
-          const rvScript = document.createElement('script');
-          rvScript.src = 'https://code.responsivevoice.org/responsivevoice.js';
-          rvScript.async = true;
-          document.head.appendChild(rvScript);
-        } catch {
-          // Ignore script loading errors
+        // Wake up speech synthesis if paused
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
         }
-      }
+      } catch {}
     }
 
     return () => {
-      stopAgroDoctorSpeech();
+      stopSpeaking();
     };
   }, []);
 
-  // Stop current active speech playback cleanly
+  // Force Speech Synthesis Reset & Stop
   const stopSpeaking = () => {
-    stopAgroDoctorSpeech();
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch {}
+    }
+    activeUtteranceRef.current = null;
+    try {
+      (window as unknown as { __activeSpeechUtterance?: unknown }).__activeSpeechUtterance = null;
+    } catch {}
     setIsSpeaking(false);
   };
 
   // Play auditory tone chime for immediate user feedback
-  const playAudioCue = (freq = 600, durationMs = 120) => {
+  const playAudioCue = (freq = 600, _durationMs = 120) => {
     playAgroDoctorAudioFallback([freq]);
   };
 
-  // Full Text-to-Speech (TTS) Voice Engine
+  // Full Text-to-Speech (TTS) Voice Engine for Android WebView
   const speakText = (text: string) => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      if (onStatusChange) onStatusChange(lang === 'HI' ? 'स्पीच सिंथेसिस असमर्थ है' : 'Speech synthesis not supported');
+      return;
+    }
+
+    // 1. FORCE SPEECH SYNTHESIS RESET BEFORE SPEAKING
+    try {
+      window.speechSynthesis.cancel();
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+      }
+    } catch (e) {
+      console.warn('SpeechSynthesis cancel/resume error:', e);
+    }
+
+    // If already speaking, toggle off immediately
     if (isSpeaking) {
       stopSpeaking();
       return;
     }
 
-    playAudioCue(540, 90);
+    // Strip Markdown symbols and emojis for crisp, natural pronunciation
+    const cleanText = text
+      .replace(/[*#_`~]/g, ' ')
+      .replace(/[🌾🟡🐛🧪🪰🌿🍂🌽💡⚠️✓⚡🎯💧⏱️]/gu, '')
+      .replace(/\s+/g, ' ')
+      .trim();
 
-    speakAgroDoctorText(text, {
-      lang,
-      onStart: () => {
+    if (!cleanText) return;
+
+    try {
+      const utterance = new SpeechSynthesisUtterance(cleanText);
+
+      // 2. HINDI & ENGLISH TTS VOICE SELECTION
+      const voices = window.speechSynthesis.getVoices();
+      let selectedVoice: SpeechSynthesisVoice | null = null;
+      let selectedLang = 'en-US';
+
+      if (lang === 'HI') {
+        // Step A: Explicitly search for Hindi voice (hi-IN, hi, Hindi)
+        selectedVoice = voices.find(v => 
+          v.lang.toLowerCase().includes('hi-in') || 
+          v.lang.toLowerCase().startsWith('hi') || 
+          v.name.toLowerCase().includes('hindi')
+        ) || null;
+
+        if (selectedVoice) {
+          selectedLang = selectedVoice.lang || 'hi-IN';
+        } else {
+          // Step B: Search for Indian English voice (en-IN)
+          selectedVoice = voices.find(v => 
+            v.lang.toLowerCase().includes('en-in') || 
+            v.name.toLowerCase().includes('india')
+          ) || null;
+
+          if (selectedVoice) {
+            selectedLang = selectedVoice.lang || 'en-IN';
+          } else {
+            // Step C: Fallback to standard English (en-US)
+            selectedVoice = voices.find(v => 
+              v.lang.toLowerCase().includes('en-us') || 
+              v.lang.toLowerCase().startsWith('en')
+            ) || voices[0] || null;
+            selectedLang = selectedVoice?.lang || 'en-US';
+          }
+        }
+      } else {
+        // English Mode
+        selectedVoice = voices.find(v => 
+          v.lang.toLowerCase().includes('en-in') || 
+          v.name.toLowerCase().includes('india')
+        ) || voices.find(v => 
+          v.lang.toLowerCase().includes('en-us') || 
+          v.lang.toLowerCase().startsWith('en')
+        ) || voices[0] || null;
+        selectedLang = selectedVoice?.lang || 'en-US';
+      }
+
+      if (selectedVoice) {
+        utterance.voice = selectedVoice;
+        utterance.lang = selectedLang;
+      } else {
+        utterance.lang = selectedLang;
+      }
+
+      // Adjusted rate (0.9) and pitch (1.0) so it reads clearly even on fallbacks
+      utterance.rate = 0.9;
+      utterance.pitch = 1.0;
+
+      // 4. VISUAL AUDIO FEEDBACK LIFECYCLE
+      utterance.onstart = () => {
         setIsSpeaking(true);
         if (onStatusChange) {
-          onStatusChange(lang === 'HI' ? 'वॉइस सहायक बोल रहा है...' : 'Voice Assistant speaking...');
+          onStatusChange(lang === 'HI' ? 'बोल रहा है...' : 'Speaking...');
         }
-      },
-      onEnd: () => {
+      };
+
+      utterance.onend = () => {
         setIsSpeaking(false);
-      },
-      onError: (err) => {
-        console.warn('Speech engine error:', err);
+        activeUtteranceRef.current = null;
+        try {
+          (window as unknown as { __activeSpeechUtterance?: unknown }).__activeSpeechUtterance = null;
+        } catch {}
+        if (onStatusChange) {
+          onStatusChange(lang === 'HI' ? 'ऑडियो समाप्त' : 'Audio finished');
+        }
+      };
+
+      utterance.onerror = (event) => {
+        // Ignore canceled/interrupted events
+        if (event.error !== 'canceled' && event.error !== 'interrupted') {
+          console.warn('Speech synthesis error:', event);
+        }
         setIsSpeaking(false);
+        activeUtteranceRef.current = null;
+        try {
+          (window as unknown as { __activeSpeechUtterance?: unknown }).__activeSpeechUtterance = null;
+        } catch {}
+      };
+
+      // Keep strong reference to prevent Chromium garbage collection bug
+      activeUtteranceRef.current = utterance;
+      try {
+        (window as unknown as { __activeSpeechUtterance?: unknown }).__activeSpeechUtterance = utterance;
+      } catch {}
+
+      // 3. DIRECT SYNCHRONOUS TRIGGER INSIDE USER GESTURE
+      window.speechSynthesis.speak(utterance);
+
+      // Force resume if Android WebView stalled
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
       }
-    });
+    } catch (err) {
+      console.error('Speech synthesis trigger exception:', err);
+      setIsSpeaking(false);
+    }
   };
 
   // Trigger Speech-to-Text (STT) Voice Recognition with robust permission check
@@ -560,25 +682,26 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
                   speakText(textToRead);
                 }
               }}
-              className={`shrink-0 flex items-center space-x-1.5 px-2 py-0.5 rounded text-[10px] font-bold border transition-all active:scale-95 shadow-2xs ${
+              className={`shrink-0 flex items-center space-x-1.5 px-2.5 py-1 rounded text-[10px] font-bold border transition-all active:scale-95 shadow-2xs ${
                 isSpeaking
-                  ? 'bg-amber-500 border-amber-600 text-white'
-                  : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border-emerald-200'
+                  ? 'bg-emerald-600 border-emerald-700 text-white ring-2 ring-emerald-400/60 shadow-xs'
+                  : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border-emerald-300'
               }`}
               title={isSpeaking ? (lang === 'HI' ? 'ऑडियो रोकें' : 'Stop Audio') : (lang === 'HI' ? 'सुनाएँ (Listen)' : 'Listen with TTS')}
             >
               {isSpeaking ? (
                 <>
+                  <Volume2 className="w-3.5 h-3.5 text-white animate-pulse" />
                   <div className="flex items-center space-x-0.5">
                     <span className="w-0.5 h-2 bg-white rounded animate-pulse" />
                     <span className="w-0.5 h-3 bg-white rounded animate-bounce" />
                     <span className="w-0.5 h-1.5 bg-white rounded animate-pulse" />
                   </div>
-                  <span>{lang === 'HI' ? 'रोकें' : 'Stop'}</span>
+                  <span>{lang === 'HI' ? 'बोल रहा है... (रोकें)' : 'Speaking... (Stop)'}</span>
                 </>
               ) : (
                 <>
-                  <Volume2 className="w-3 h-3 text-emerald-700" />
+                  <Volume2 className="w-3.5 h-3.5 text-emerald-700" />
                   <span>{lang === 'HI' ? 'सुनाएँ' : 'Listen'}</span>
                 </>
               )}
