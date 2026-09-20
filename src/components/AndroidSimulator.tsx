@@ -385,76 +385,69 @@ export const AndroidSimulator: React.FC<AndroidSimulatorProps> = ({
   };
 
   return (
-    <div id="android-simulator-container" className="flex flex-col items-center justify-center p-2">
-      
-      {/* Phone Hardware Chassis */}
-      <div 
-        id="phone-chassis"
-        className="w-full max-w-[390px] bg-neutral-900 rounded-[44px] p-3 shadow-2xl border-[5px] border-neutral-800 ring-1 ring-neutral-700/60 relative select-none"
-      >
-        {/* Camera Notch */}
-        <div className="absolute top-5 left-1/2 -translate-x-1/2 w-32 h-4 bg-black rounded-full flex items-center justify-center z-30">
-          <div className="w-10 h-1 bg-neutral-800 rounded-full mr-3"></div>
-          <div className="w-2.5 h-2.5 bg-neutral-900 border border-neutral-700 rounded-full"></div>
+    <div id="agro-save-native-view" className="w-full flex flex-col flex-1">
+      {/* Top Header & Android Status Bar */}
+      <header className="bg-[#1B5E20] text-white shadow-md sticky top-0 z-40">
+        {/* Hardware Status Strip */}
+        <div className="bg-[#144718] text-emerald-200 text-[11px] px-4 py-1.5 flex items-center justify-between font-mono">
+          <span className="font-semibold tracking-wider flex items-center space-x-1.5">
+            <span className={`w-2 h-2 rounded-full ${isHardwareOnline ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`}></span>
+            <span>ESP32-CAM AP</span>
+          </span>
+          <div className="flex items-center space-x-2">
+            <span className="text-[10px] bg-emerald-900/80 px-2 py-0.5 rounded border border-emerald-700/50 text-emerald-200 font-mono">
+              {espIp}
+            </span>
+            <div className="flex items-center space-x-1">
+              <Wifi className={`w-3.5 h-3.5 ${isHardwareOnline ? 'text-emerald-300' : 'text-red-400'}`} />
+              <span className="text-[10px]">
+                {isHardwareOnline && displayBattery !== null ? `${displayBattery}%` : '--%'}
+              </span>
+            </div>
+          </div>
         </div>
 
-        {/* Screen Bezel */}
-        <div 
-          id="phone-screen"
-          className="bg-[#F1F5F1] rounded-[34px] overflow-hidden flex flex-col h-[780px] text-neutral-900 relative"
-        >
-          {/* Status Bar */}
-          <div className="bg-[#1B5E20] text-emerald-100 text-[11px] px-6 pt-3 pb-1 flex items-center justify-between font-mono shrink-0">
-            <span>10:30 AM</span>
-            <div className="flex items-center space-x-2">
-              <span className="text-[10px] bg-emerald-800 px-1.5 py-0.5 rounded text-emerald-200">{espIp}</span>
-              <Wifi className={`w-3.5 h-3.5 ${isHardwareOnline ? 'text-emerald-300' : 'text-neutral-400'}`} />
-              <span>{isHardwareOnline && displayBattery !== null ? `${displayBattery}%` : '--%'}</span>
-            </div>
+        {/* Primary App Bar with Language Toggle & Connection Status */}
+        <div className="w-full px-3.5 py-2.5 flex items-center justify-between">
+          <div>
+            <h1 className="font-bold text-[15px] tracking-wide leading-tight text-white">
+              {lang === 'HI' ? 'AGRO SAVE • स्मार्ट कृषि' : 'AGRO SAVE • Smart Agri'}
+            </h1>
+            <p className="text-[10px] text-emerald-200 leading-tight">
+              {lang === 'HI' ? 'एआई परिशुद्धता छिड़काव यंत्र' : 'AI Precision Sprayer | ESP32'}
+            </p>
           </div>
 
-          {/* APP HEADER WITH DUAL LANGUAGE TOGGLE BUTTON */}
-          <div className="bg-[#1B5E20] text-white px-4 py-2.5 shadow-md shrink-0">
-            <div className="flex items-center justify-between">
-              <div className="pr-1">
-                <h3 className="font-bold text-[15px] tracking-wide leading-tight">
-                  {lang === 'HI' ? 'AGRO SAVE • स्मार्ट कृषि' : 'AGRO SAVE • Smart Agri'}
-                </h3>
-                <p className="text-[10px] text-emerald-200 leading-tight">
-                  {lang === 'HI' ? 'एआई परिशुद्धता छिड़काव यंत्र' : 'AI Precision Sprayer | ESP32'}
-                </p>
-              </div>
+          {/* Language Switcher & Connection Pill */}
+          <div className="flex items-center space-x-1.5">
+            {/* Prominent Language Button ("Language / भाषा: EN | HI") */}
+            <button
+              type="button"
+              onClick={() => setLang(prev => prev === 'HI' ? 'EN' : 'HI')}
+              className="bg-[#2E7D32] hover:bg-[#388E3C] text-white border border-emerald-400/50 rounded-full px-2.5 py-1 text-[11px] font-bold transition-all active:scale-95 shadow-xs flex items-center space-x-1"
+              title="Toggle Language / भाषा बदलें"
+            >
+              <Languages className="w-3.5 h-3.5 text-amber-300" />
+              <span>{lang === 'HI' ? 'भाषा: HI | EN' : 'Lang: EN | HI'}</span>
+            </button>
 
-              {/* Language Switcher & Connection Pill */}
-              <div className="flex items-center space-x-1.5">
-                {/* Prominent Language Button ("Language / भाषा: EN | HI") */}
-                <button
-                  type="button"
-                  onClick={() => setLang(prev => prev === 'HI' ? 'EN' : 'HI')}
-                  className="bg-[#2E7D32] hover:bg-[#388E3C] text-white border border-emerald-400/50 rounded-full px-2.5 py-1 text-[10px] font-bold transition-all active:scale-95 shadow-xs flex items-center space-x-1"
-                  title="Toggle Language / भाषा बदलें"
-                >
-                  <Languages className="w-3 h-3 text-amber-300" />
-                  <span>{lang === 'HI' ? 'भाषा: HI | EN' : 'Lang: EN | HI'}</span>
-                </button>
-
-                {/* Connection LED */}
-                <div 
-                  onClick={() => setIsConnected(!isConnected)}
-                  className="flex items-center space-x-1 bg-black/25 px-2 py-1 rounded-full border border-emerald-500/30 cursor-pointer"
-                  title="Connection Status"
-                >
-                  <div className={`w-2 h-2 rounded-full ${isHardwareOnline ? 'bg-[#00E676] shadow-[0_0_6px_#00E676]' : 'bg-[#FF1744]'}`} />
-                  <span className="text-[9px] font-bold text-emerald-100">
-                    {isHardwareOnline ? (lang === 'HI' ? 'ऑनलाइन' : 'ONLINE') : (lang === 'HI' ? 'डिस्कनेक्टेड' : 'DISCONNECTED')}
-                  </span>
-                </div>
-              </div>
+            {/* Connection LED */}
+            <div 
+              onClick={() => setIsConnected(!isConnected)}
+              className="flex items-center space-x-1 bg-black/25 px-2.5 py-1 rounded-full border border-emerald-500/30 cursor-pointer"
+              title="Connection Status"
+            >
+              <div className={`w-2 h-2 rounded-full ${isHardwareOnline ? 'bg-[#00E676] shadow-[0_0_6px_#00E676]' : 'bg-[#FF1744]'}`} />
+              <span className="text-[10px] font-bold text-emerald-100">
+                {isHardwareOnline ? (lang === 'HI' ? 'ऑनलाइन' : 'ONLINE') : (lang === 'HI' ? 'डिस्कनेक्टेड' : 'DISCONNECTED')}
+              </span>
             </div>
           </div>
+        </div>
+      </header>
 
-          {/* SCROLLABLE APP BODY (Simulating Android ScrollView) */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-3 scrollbar-thin">
+      {/* NATIVE SCROLLABLE APP BODY */}
+      <main className="w-full p-3 space-y-3 pb-8">
             
             {/* 0. AI AGRO-DOCTOR & VOICE ASSISTANT CARD (BILINGUAL & VOICE-ENABLED) */}
             <div className="bg-gradient-to-br from-emerald-50 to-white rounded-xl p-3 shadow-sm border border-emerald-900/15">
@@ -1344,39 +1337,34 @@ export const AndroidSimulator: React.FC<AndroidSimulatorProps> = ({
               </div>
             </div>
 
+      </main>
+
+      {/* Helper Footer for Field Tests */}
+      <footer className="bg-white/90 border-t border-slate-200 py-2.5 px-3 text-xs text-neutral-600 mt-auto">
+        <div className="w-full flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={toggleLowBatteryTest}
+              className="bg-white hover:bg-neutral-100 text-neutral-700 px-3 py-1 rounded-full border border-neutral-300 shadow-2xs font-medium flex items-center space-x-1 text-[11px] active:scale-95 transition-all"
+            >
+              <BatteryWarning className="w-3.5 h-3.5 text-amber-600" />
+              <span>Test Low Battery Alert (&lt;15%)</span>
+            </button>
+
+            <button
+              onClick={() => setIsSoundEnabled(!isSoundEnabled)}
+              className="bg-white hover:bg-neutral-100 text-neutral-700 px-3 py-1 rounded-full border border-neutral-300 shadow-2xs font-medium flex items-center space-x-1 text-[11px] active:scale-95 transition-all"
+            >
+              {isSoundEnabled ? <Volume2 className="w-3.5 h-3.5 text-emerald-600" /> : <VolumeX className="w-3.5 h-3.5 text-neutral-400" />}
+              <span>Audio: {isSoundEnabled ? 'ON' : 'MUTED'}</span>
+            </button>
           </div>
 
-          {/* Android Navigation Footer */}
-          <div className="bg-black/90 py-1.5 flex justify-around items-center text-neutral-400 shrink-0">
-            <div className="w-3 h-3 border-2 border-neutral-400 rounded-xs"></div>
-            <div className="w-3 h-3 border-2 border-neutral-400 rounded-full"></div>
-            <div className="w-0 h-0 border-y-[5px] border-y-transparent border-r-[8px] border-r-neutral-400"></div>
-          </div>
+          <span className="font-mono text-[11px] text-neutral-500">
+            Target: <strong className="text-neutral-800">{espIp}</strong>
+          </span>
         </div>
-      </div>
-
-      {/* Simulator Quick Action Helpers */}
-      <div className="flex items-center space-x-3 mt-3 text-xs text-neutral-600 flex-wrap justify-center gap-2">
-        <button
-          onClick={toggleLowBatteryTest}
-          className="bg-white hover:bg-neutral-100 text-neutral-700 px-2.5 py-1 rounded-full border border-neutral-300 shadow-2xs font-medium flex items-center space-x-1 text-[11px]"
-        >
-          <BatteryWarning className="w-3.5 h-3.5 text-amber-600" />
-          <span>Test Low Battery Alert (&lt;15%)</span>
-        </button>
-
-        <button
-          onClick={() => setIsSoundEnabled(!isSoundEnabled)}
-          className="bg-white hover:bg-neutral-100 text-neutral-700 px-2.5 py-1 rounded-full border border-neutral-300 shadow-2xs font-medium flex items-center space-x-1 text-[11px]"
-        >
-          {isSoundEnabled ? <Volume2 className="w-3.5 h-3.5 text-emerald-600" /> : <VolumeX className="w-3.5 h-3.5 text-neutral-400" />}
-          <span>Audio: {isSoundEnabled ? 'ON' : 'MUTED'}</span>
-        </button>
-
-        <span className="font-mono text-[11px] text-neutral-500">
-          Target: <strong className="text-neutral-800">{espIp}</strong>
-        </span>
-      </div>
+      </footer>
     </div>
   );
 };

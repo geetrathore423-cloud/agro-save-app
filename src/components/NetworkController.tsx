@@ -14,7 +14,7 @@ import {
 import { Esp32HardwareStatus, Esp32Mode } from '../types';
 
 interface NetworkControllerProps {
-  espIp: string;
+  espIp?: string;
   setEspIp?: (ip: string) => void;
   hardwareStatus?: Esp32HardwareStatus;
   batteryLevel?: number | null;
@@ -24,13 +24,13 @@ interface NetworkControllerProps {
   isConnected?: boolean;
   isPolling?: boolean;
   lastPolled?: string;
-  onSetMode: (mode: 'CROP' | 'WEED' | 'crop' | 'weed') => void;
+  onSetMode?: (mode: 'CROP' | 'WEED' | 'crop' | 'weed') => void;
   onRefreshNow?: () => void;
   onTriggerPoll?: () => void;
 }
 
 export const NetworkController: React.FC<NetworkControllerProps> = ({
-  espIp,
+  espIp: propEspIp = '192.168.4.1',
   setEspIp,
   hardwareStatus,
   batteryLevel,
@@ -38,27 +38,107 @@ export const NetworkController: React.FC<NetworkControllerProps> = ({
   relay,
   irTriggered,
   isConnected,
-  isPolling = false,
+  isPolling: propIsPolling,
   lastPolled,
   onSetMode,
   onRefreshNow,
   onTriggerPoll
 }) => {
+  const [internalIp, setInternalIp] = React.useState<string>(propEspIp || '192.168.4.1');
+  const [internalBattery, setInternalBattery] = React.useState<number | null>(68);
+  const [internalMode, setInternalMode] = React.useState<string>('CROP');
+  const [internalRelay, setInternalRelay] = React.useState<boolean>(false);
+  const [internalIr, setInternalIr] = React.useState<boolean>(false);
+  const [internalOnline, setInternalOnline] = React.useState<boolean>(true);
+  const [internalPolling, setInternalPolling] = React.useState<boolean>(false);
+  const [internalLastPolled, setInternalLastPolled] = React.useState<string>('');
+
+  const activeIp = propEspIp || internalIp || '192.168.4.1';
+
+  // Standalone polling if parent doesn't provide managed telemetry
+  React.useEffect(() => {
+    if (hardwareStatus || isConnected !== undefined) return;
+
+    let isSubscribed = true;
+    const fetchStatus = async () => {
+      setInternalPolling(true);
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 2500);
+        const res = await fetch(`http://${activeIp}/status`, { signal: controller.signal, mode: 'cors' });
+        clearTimeout(timeout);
+        if (res.ok) {
+          const data = await res.json();
+          if (isSubscribed) {
+            if (typeof data.battery_level === 'number') setInternalBattery(data.battery_level);
+            else if (typeof data.battery === 'number') setInternalBattery(data.battery);
+            if (data.mode) setInternalMode(String(data.mode).toUpperCase());
+            if (typeof data.relay === 'boolean') setInternalRelay(data.relay);
+            if (typeof data.ir_triggered === 'boolean') setInternalIr(data.ir_triggered);
+            setInternalOnline(true);
+            setInternalLastPolled(new Date().toLocaleTimeString());
+          }
+        } else {
+          if (isSubscribed) setInternalOnline(false);
+        }
+      } catch {
+        if (isSubscribed) setInternalOnline(false);
+      } finally {
+        if (isSubscribed) setInternalPolling(false);
+      }
+    };
+
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 3000);
+    return () => {
+      isSubscribed = false;
+      clearInterval(interval);
+    };
+  }, [activeIp, hardwareStatus, isConnected]);
+
   // Graceful fallback and resolution of hardware state with exact keys: battery_level, mode, relay, ir_triggered
   const battery = hardwareStatus?.battery_level !== undefined && hardwareStatus.battery_level !== null
     ? hardwareStatus.battery_level
-    : (hardwareStatus?.battery !== undefined ? hardwareStatus.battery : (batteryLevel !== undefined ? batteryLevel : null));
+    : (hardwareStatus?.battery !== undefined ? hardwareStatus.battery : (batteryLevel !== undefined ? batteryLevel : internalBattery));
 
-  const rawMode = hardwareStatus?.mode || currentMode || 'CROP';
+  const rawMode = hardwareStatus?.mode || currentMode || internalMode || 'CROP';
   const mode = String(rawMode).toUpperCase();
-  const isOnline = hardwareStatus?.isOnline !== undefined ? hardwareStatus.isOnline : (isConnected ?? false);
-  const lastUpdated = hardwareStatus?.lastUpdated || lastPolled || '';
+  const isOnline = hardwareStatus?.isOnline !== undefined ? hardwareStatus.isOnline : (isConnected ?? internalOnline);
+  const isPolling = propIsPolling ?? internalPolling;
+  const lastUpdated = hardwareStatus?.lastUpdated || lastPolled || internalLastPolled;
   const error = hardwareStatus?.error;
 
-  const relayActive = hardwareStatus?.relay !== undefined ? hardwareStatus.relay : (relay ?? false);
-  const irActive = hardwareStatus?.ir_triggered !== undefined ? hardwareStatus.ir_triggered : (irTriggered ?? false);
+  const relayActive = hardwareStatus?.relay !== undefined ? hardwareStatus.relay : (relay ?? internalRelay);
+  const irActive = hardwareStatus?.ir_triggered !== undefined ? hardwareStatus.ir_triggered : (irTriggered ?? internalIr);
 
-  const handleRefresh = onTriggerPoll || onRefreshNow || (() => {});
+  const handleSetMode = async (newMode: 'CROP' | 'WEED' | 'crop' | 'weed') => {
+    const formattedMode = String(newMode).toUpperCase() === 'WEED' ? 'WEED' : 'CROP';
+    if (onSetMode) {
+      onSetMode(formattedMode);
+      return;
+    }
+    setInternalMode(formattedMode);
+    try {
+      await fetch(`http://${activeIp}/setMode?mode=${formattedMode}`, { mode: 'cors' });
+    } catch {
+      // Offline fallback
+    }
+  };
+
+  const handleRefresh = onTriggerPoll || onRefreshNow || (() => {
+    setInternalPolling(true);
+    fetch(`http://${activeIp}/status`, { mode: 'cors' })
+      .then(res => res.json())
+      .then(data => {
+        if (typeof data.battery_level === 'number') setInternalBattery(data.battery_level);
+        if (data.mode) setInternalMode(String(data.mode).toUpperCase());
+        setInternalOnline(true);
+        setInternalLastPolled(new Date().toLocaleTimeString());
+      })
+      .catch(() => setInternalOnline(false))
+      .finally(() => setInternalPolling(false));
+  });
+
   const isCropActive = mode === 'CROP';
   const isWeedActive = mode === 'WEED';
 
@@ -76,7 +156,7 @@ export const NetworkController: React.FC<NetworkControllerProps> = ({
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block" />
             </h3>
             <p className="text-[11px] text-neutral-500 font-mono">
-              http://{espIp} • 3000ms Polling (/status)
+              http://{activeIp} • 3000ms Polling (/status)
             </p>
           </div>
         </div>
@@ -171,7 +251,7 @@ export const NetworkController: React.FC<NetworkControllerProps> = ({
               </span>
             </div>
             <p className="text-[10px] text-neutral-500 mb-2 font-mono">
-              GET http://{espIp}/setMode?mode={mode === 'WEED' ? 'WEED' : 'CROP'}
+              GET http://{activeIp}/setMode?mode={mode === 'WEED' ? 'WEED' : 'CROP'}
             </p>
           </div>
 
@@ -181,7 +261,7 @@ export const NetworkController: React.FC<NetworkControllerProps> = ({
             <button
               id="btn-mode-crop"
               type="button"
-              onClick={() => onSetMode('CROP')}
+              onClick={() => handleSetMode('CROP')}
               className={`p-2 rounded-lg border text-xs font-bold transition-all flex items-center justify-center space-x-1.5 shadow-2xs active:scale-[0.98] ${
                 isCropActive
                   ? 'bg-[#1B5E20] text-white border-[#1B5E20] ring-2 ring-emerald-400/40 shadow-sm'
@@ -197,7 +277,7 @@ export const NetworkController: React.FC<NetworkControllerProps> = ({
             <button
               id="btn-mode-weed"
               type="button"
-              onClick={() => onSetMode('WEED')}
+              onClick={() => handleSetMode('WEED')}
               className={`p-2 rounded-lg border text-xs font-bold transition-all flex items-center justify-center space-x-1.5 shadow-2xs active:scale-[0.98] ${
                 isWeedActive
                   ? 'bg-[#1B5E20] text-white border-[#1B5E20] ring-2 ring-emerald-400/40 shadow-sm'
@@ -248,3 +328,5 @@ export const NetworkController: React.FC<NetworkControllerProps> = ({
     </div>
   );
 };
+
+export default NetworkController;
