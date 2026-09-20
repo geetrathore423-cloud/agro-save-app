@@ -16,6 +16,9 @@ import {
 import { AiDoctorRemedy } from '../types';
 import { COMPREHENSIVE_AGRO_REMEDIES, diagnoseAgroQuery } from '../utils/aiDoctorEngine';
 import { speakAgroDoctorText, stopAgroDoctorSpeech, playAgroDoctorAudioFallback } from '../utils/audio';
+import { SpeechRecognition } from '@capacitor-community/speech-recognition';
+import { TextToSpeech } from '@capacitor-community/text-to-speech';
+import { Capacitor } from '@capacitor/core';
 
 interface AiAgroDoctorProps {
   lang: 'EN' | 'HI';
@@ -71,7 +74,15 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
   }, []);
 
   // Force Speech Synthesis Reset & Stop
-  const stopSpeaking = () => {
+  const stopSpeaking = async () => {
+    // Stop native Capacitor TextToSpeech
+    try {
+      if (Capacitor.isNativePlatform()) {
+        await TextToSpeech.stop();
+      }
+    } catch {}
+
+    // Stop web SpeechSynthesis
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       try {
         window.speechSynthesis.cancel();
@@ -89,28 +100,16 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
     playAgroDoctorAudioFallback([freq]);
   };
 
-  // Full Text-to-Speech (TTS) Voice Engine for Android WebView
-  const speakText = (text: string) => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-      if (onStatusChange) onStatusChange(lang === 'HI' ? 'स्पीच सिंथेसिस असमर्थ है' : 'Speech synthesis not supported');
-      return;
-    }
-
-    // 1. FORCE SPEECH SYNTHESIS CANCEL & RESUME PRIOR TO SPEAKING
-    try {
-      window.speechSynthesis.cancel();
-      if (window.speechSynthesis.paused) {
-        window.speechSynthesis.resume();
-      }
-    } catch (e) {
-      console.warn('SpeechSynthesis reset exception:', e);
-    }
-
+  // Full Text-to-Speech (TTS) Voice Engine with Native Capacitor + Web Speech Fallback
+  const speakText = async (text: string) => {
     // If already speaking, toggle off immediately
     if (isSpeaking) {
-      stopSpeaking();
+      await stopSpeaking();
       return;
     }
+
+    // 1. CANCEL STUCK SPEECH BEFORE SPEAKING
+    await stopSpeaking();
 
     // Strip Markdown symbols and emojis for crisp, natural pronunciation
     const cleanText = text
@@ -121,16 +120,51 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
 
     if (!cleanText) return;
 
+    // 2. NATIVE CAPACITOR TEXT-TO-SPEECH FOR ANDROID
+    if (Capacitor.isNativePlatform()) {
+      try {
+        setIsSpeaking(true);
+        if (onStatusChange) {
+          onStatusChange(lang === 'HI' ? 'बोल रहा है...' : 'Speaking...');
+        }
+        await TextToSpeech.speak({
+          text: cleanText,
+          lang: lang === 'HI' ? 'hi-IN' : 'en-IN',
+          rate: 1.0,
+          pitch: 1.0,
+          volume: 1.0,
+          category: 'ambient',
+        });
+        setIsSpeaking(false);
+        if (onStatusChange) {
+          onStatusChange(lang === 'HI' ? 'ऑडियो समाप्त' : 'Audio finished');
+        }
+        return;
+      } catch (nativeErr) {
+        console.warn('Native TextToSpeech failed, falling back to Web Speech:', nativeErr);
+        // Fall through to browser SpeechSynthesis
+      }
+    }
+
+    // 3. BROWSER / WEBVIEW SPEECHSYNTHESIS FALLBACK
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      if (onStatusChange) onStatusChange(lang === 'HI' ? 'स्पीच सिंथेसिस असमर्थ है' : 'Speech synthesis not supported');
+      setIsSpeaking(false);
+      return;
+    }
+
     try {
+      window.speechSynthesis.cancel();
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+      }
+
       const utterance = new SpeechSynthesisUtterance(cleanText);
+      utterance.lang = lang === 'HI' ? 'hi-IN' : 'en-IN';
 
-      // Force utterance language to 'hi-IN' as requested
-      utterance.lang = 'hi-IN';
-
-      // Load and pick best matching voice for hi-IN
       const voices = window.speechSynthesis.getVoices();
       if (voices && voices.length > 0) {
-        const hiVoice = voices.find(v => 
+        const targetVoice = voices.find(v => 
           v.lang.toLowerCase().includes('hi-in') || 
           v.lang.toLowerCase().startsWith('hi') || 
           v.name.toLowerCase().includes('hindi')
@@ -141,15 +175,14 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
           v.lang.toLowerCase().includes('en')
         ) || voices[0];
 
-        if (hiVoice) {
-          utterance.voice = hiVoice;
+        if (targetVoice) {
+          utterance.voice = targetVoice;
         }
       }
 
-      utterance.rate = 0.9;
+      utterance.rate = 0.95;
       utterance.pitch = 1.0;
 
-      // Visual audio feedback on start
       utterance.onstart = () => {
         setIsSpeaking(true);
         if (onStatusChange) {
@@ -157,7 +190,6 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
         }
       };
 
-      // Visual audio reset on end
       utterance.onend = () => {
         setIsSpeaking(false);
         activeUtteranceRef.current = null;
@@ -180,13 +212,11 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
         } catch {}
       };
 
-      // Keep strong reference to prevent Chromium garbage collection bug
       activeUtteranceRef.current = utterance;
       try {
         (window as unknown as { __activeSpeechUtterance?: unknown }).__activeSpeechUtterance = utterance;
       } catch {}
 
-      // Direct trigger
       window.speechSynthesis.speak(utterance);
 
       if (window.speechSynthesis.paused) {
@@ -198,11 +228,94 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
     }
   };
 
-  // Trigger Speech-to-Text (STT) Voice Recognition with AudioContext unlock
+  // Trigger Speech-to-Text (STT) Voice Recognition with Native Capacitor + Web Fallback
   const toggleListening = async () => {
     setMicPermissionAlert(null);
 
-    // 1. FIRST TRIGGER AN AUDIO CONTEXT UNLOCK ON USER TOUCH/CLICK
+    // Stop listening if already active
+    if (isListening) {
+      if (Capacitor.isNativePlatform()) {
+        try {
+          await SpeechRecognition.stop();
+        } catch {}
+      }
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {}
+      }
+      setIsListening(false);
+      return;
+    }
+
+    // Stop active TTS audio before listening
+    await stopSpeaking();
+
+    // 1. FIRST TRY NATIVE CAPACITOR SPEECH RECOGNITION (FOR ANDROID DEVICES)
+    if (Capacitor.isNativePlatform()) {
+      try {
+        // Check and request microphone permission natively
+        const permStatus = await SpeechRecognition.checkPermissions();
+        if (permStatus.speechRecognition !== 'granted') {
+          const req = await SpeechRecognition.requestPermissions();
+          if (req.speechRecognition !== 'granted') {
+            setMicPermissionAlert(
+              lang === 'HI'
+                ? 'कृपया ऐप सेटिंग्स में जाकर माइक्रोफ़ोन की अनुमति दें।'
+                : 'Microphone permission required. Please allow access in settings.'
+            );
+            return;
+          }
+        }
+
+        setIsListening(true);
+        if (onStatusChange) {
+          onStatusChange(lang === 'HI' ? 'बोलिए, मैं सुन रहा हूँ...' : 'Listening, speak now...');
+        }
+
+        // Listen for speech results from native Android
+        SpeechRecognition.removeAllListeners();
+        SpeechRecognition.addListener('partialResults', (data: { matches: string[] }) => {
+          if (data.matches && data.matches.length > 0) {
+            const transcript = data.matches[0];
+            setDoctorQuery(transcript);
+          }
+        });
+
+        const result = await SpeechRecognition.start({
+          language: lang === 'HI' ? 'hi-IN' : 'en-IN',
+          maxResults: 2,
+          prompt: lang === 'HI' ? 'फसल की बीमारी या समस्या बताएं...' : 'Describe crop disease or pest...',
+          partialResults: false,
+          popup: true,
+        });
+
+        setIsListening(false);
+
+        if (result && result.matches && result.matches.length > 0) {
+          const transcript = result.matches[0];
+          setDoctorQuery(transcript);
+          setLastTranscribed(transcript);
+          handleAskDoctor(transcript, true);
+        }
+        return;
+      } catch (nativeErr: any) {
+        console.warn('Native Capacitor SpeechRecognition error, falling back to Web Speech:', nativeErr);
+        setIsListening(false);
+        // If native failed because permission was rejected, inform user
+        if (String(nativeErr).toLowerCase().includes('permission')) {
+          setMicPermissionAlert(
+            lang === 'HI'
+              ? 'कृपया माइक की अनुमति दें (Android Settings > Permissions > Microphone)'
+              : 'Microphone permission required. Please allow in Android App Settings.'
+          );
+          return;
+        }
+      }
+    }
+
+    // 2. BROWSER / WEBVIEW SPEECH RECOGNITION FALLBACK
+    // Audio Context unlock for mobile browsers
     try {
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (AudioCtx) {
@@ -212,47 +325,15 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
         }
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
-        gain.gain.value = 0.001; // Silent/micro unlock tone
+        gain.gain.value = 0.001;
         osc.frequency.value = 600;
         osc.connect(gain);
         gain.connect(audioCtx.destination);
         osc.start(0);
         osc.stop(audioCtx.currentTime + 0.05);
       }
-    } catch (e) {
-      console.warn('AudioContext unlock:', e);
-    }
+    } catch {}
 
-    if (isListening) {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch {
-          // ignore
-        }
-      }
-      setIsListening(false);
-      return;
-    }
-
-    // Check for getUserMedia to proactively verify permission in Android WebView
-    if (typeof navigator !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach(track => track.stop());
-      } catch (permErr: any) {
-        if (permErr?.name === 'NotAllowedError' || permErr?.name === 'PermissionDeniedError') {
-          const alertMsg = lang === 'HI'
-            ? 'कृपया माइक की अनुमति दें (माइक एक्सेस अस्वीकृत है)। अपने फोन या ऐप सेटिंग्स में जाकर Microphone permission चालू करें।'
-            : 'Microphone permission required. Please allow audio access in your Android settings.';
-          setMicPermissionAlert(alertMsg);
-          if (onStatusChange) onStatusChange(lang === 'HI' ? 'माइक अनुमति आवश्यक है' : 'Microphone permission required');
-          return;
-        }
-      }
-    }
-
-    // 2. INITIALIZE webkitSpeechRecognition OR SpeechRecognition
     const SpeechRecognitionClass = (window as unknown as { SpeechRecognition?: any }).SpeechRecognition ||
                                    (window as unknown as { webkitSpeechRecognition?: any }).webkitSpeechRecognition;
 
@@ -268,8 +349,6 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
     }
 
     try {
-      stopSpeaking();
-
       const recognition = new SpeechRecognitionClass();
       recognitionRef.current = recognition;
       recognition.lang = lang === 'HI' ? 'hi-IN' : 'en-IN';
@@ -284,20 +363,17 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
         }
       };
 
-      // 3. LISTEN FOR onresult AND SET TRANSCRIBED TEXT DIRECTLY TO THE AGRO-DOCTOR SEARCH STATE
       recognition.onresult = (event: any) => {
         if (event.results && event.results[0] && event.results[0][0]) {
           const transcript = event.results[0][0].transcript;
-          // Set transcribed text directly to Agro-Doctor search state
           setDoctorQuery(transcript);
           setLastTranscribed(transcript);
-          // Automatically trigger expert diagnosis
           handleAskDoctor(transcript, true);
         }
       };
 
       recognition.onerror = (err: any) => {
-        console.warn('Speech recognition error:', err);
+        console.warn('Web Speech recognition error:', err);
         setIsListening(false);
         if (err.error === 'not-allowed' || err.error === 'service-not-allowed') {
           const alertMsg = lang === 'HI'

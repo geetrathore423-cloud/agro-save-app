@@ -1,3 +1,6 @@
+import { TextToSpeech } from '@capacitor-community/text-to-speech';
+import { Capacitor } from '@capacitor/core';
+
 // Web Audio API spray sound synthesizer for realistic haptic feedback
 
 let audioCtx: AudioContext | null = null;
@@ -80,11 +83,20 @@ export interface SpeechOptions {
 let activeUtterance: SpeechSynthesisUtterance | null = null;
 let activeWatchdog: any = null;
 
-export function stopAgroDoctorSpeech() {
+export async function stopAgroDoctorSpeech() {
   if (activeWatchdog) {
     clearTimeout(activeWatchdog);
     activeWatchdog = null;
   }
+  
+  // 1. Native Capacitor TextToSpeech stop
+  if (Capacitor.isNativePlatform()) {
+    try {
+      await TextToSpeech.stop();
+    } catch {}
+  }
+
+  // 2. Web Speech API fallback stop
   if (typeof window !== 'undefined') {
     if ('speechSynthesis' in window) {
       try {
@@ -125,12 +137,12 @@ export function playAgroDoctorAudioFallback(freqs: number[] = [523.25, 659.25, 7
   } catch {}
 }
 
-export function speakAgroDoctorText(text: string, options: SpeechOptions = {}) {
+export async function speakAgroDoctorText(text: string, options: SpeechOptions = {}) {
   const { lang = 'HI', onStart, onEnd, onError } = options;
   const isHindi = lang === 'HI';
 
-  // 1. FORCE SPEECH SYNTHESIS RESET BEFORE SPEAKING
-  stopAgroDoctorSpeech();
+  // 1. Cancel stuck speech queues
+  await stopAgroDoctorSpeech();
 
   // Strip Markdown, emojis and special agro symbols for crisp pronunciation
   const cleanText = text
@@ -142,6 +154,26 @@ export function speakAgroDoctorText(text: string, options: SpeechOptions = {}) {
   if (!cleanText) {
     if (onEnd) onEnd();
     return;
+  }
+
+  // 2. NATIVE CAPACITOR TEXT-TO-SPEECH FOR ANDROID
+  if (Capacitor.isNativePlatform()) {
+    try {
+      if (onStart) onStart();
+      await TextToSpeech.speak({
+        text: cleanText,
+        lang: isHindi ? 'hi-IN' : 'en-IN',
+        rate: 1.0,
+        pitch: 1.0,
+        volume: 1.0,
+        category: 'ambient',
+      });
+      if (onEnd) onEnd();
+      return;
+    } catch (nativeErr) {
+      console.warn('[AgroSave] Native TextToSpeech exception:', nativeErr);
+      // Fallback to web implementation if native fails
+    }
   }
 
   // 2. Native window.speechSynthesis for Android WebView & Modern Browsers
