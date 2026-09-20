@@ -96,14 +96,14 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
       return;
     }
 
-    // 1. FORCE SPEECH SYNTHESIS RESET BEFORE SPEAKING
+    // 1. FORCE SPEECH SYNTHESIS CANCEL & RESUME PRIOR TO SPEAKING
     try {
       window.speechSynthesis.cancel();
       if (window.speechSynthesis.paused) {
         window.speechSynthesis.resume();
       }
     } catch (e) {
-      console.warn('SpeechSynthesis cancel/resume error:', e);
+      console.warn('SpeechSynthesis reset exception:', e);
     }
 
     // If already speaking, toggle off immediately
@@ -124,63 +124,32 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
     try {
       const utterance = new SpeechSynthesisUtterance(cleanText);
 
-      // 2. HINDI & ENGLISH TTS VOICE SELECTION
-      const voices = window.speechSynthesis.getVoices();
-      let selectedVoice: SpeechSynthesisVoice | null = null;
-      let selectedLang = 'en-US';
+      // Force utterance language to 'hi-IN' as requested
+      utterance.lang = 'hi-IN';
 
-      if (lang === 'HI') {
-        // Step A: Explicitly search for Hindi voice (hi-IN, hi, Hindi)
-        selectedVoice = voices.find(v => 
+      // Load and pick best matching voice for hi-IN
+      const voices = window.speechSynthesis.getVoices();
+      if (voices && voices.length > 0) {
+        const hiVoice = voices.find(v => 
           v.lang.toLowerCase().includes('hi-in') || 
           v.lang.toLowerCase().startsWith('hi') || 
           v.name.toLowerCase().includes('hindi')
-        ) || null;
-
-        if (selectedVoice) {
-          selectedLang = selectedVoice.lang || 'hi-IN';
-        } else {
-          // Step B: Search for Indian English voice (en-IN)
-          selectedVoice = voices.find(v => 
-            v.lang.toLowerCase().includes('en-in') || 
-            v.name.toLowerCase().includes('india')
-          ) || null;
-
-          if (selectedVoice) {
-            selectedLang = selectedVoice.lang || 'en-IN';
-          } else {
-            // Step C: Fallback to standard English (en-US)
-            selectedVoice = voices.find(v => 
-              v.lang.toLowerCase().includes('en-us') || 
-              v.lang.toLowerCase().startsWith('en')
-            ) || voices[0] || null;
-            selectedLang = selectedVoice?.lang || 'en-US';
-          }
-        }
-      } else {
-        // English Mode
-        selectedVoice = voices.find(v => 
+        ) || voices.find(v => 
           v.lang.toLowerCase().includes('en-in') || 
           v.name.toLowerCase().includes('india')
         ) || voices.find(v => 
-          v.lang.toLowerCase().includes('en-us') || 
-          v.lang.toLowerCase().startsWith('en')
-        ) || voices[0] || null;
-        selectedLang = selectedVoice?.lang || 'en-US';
+          v.lang.toLowerCase().includes('en')
+        ) || voices[0];
+
+        if (hiVoice) {
+          utterance.voice = hiVoice;
+        }
       }
 
-      if (selectedVoice) {
-        utterance.voice = selectedVoice;
-        utterance.lang = selectedLang;
-      } else {
-        utterance.lang = selectedLang;
-      }
-
-      // Adjusted rate (0.9) and pitch (1.0) so it reads clearly even on fallbacks
       utterance.rate = 0.9;
       utterance.pitch = 1.0;
 
-      // 4. VISUAL AUDIO FEEDBACK LIFECYCLE
+      // Visual audio feedback on start
       utterance.onstart = () => {
         setIsSpeaking(true);
         if (onStatusChange) {
@@ -188,6 +157,7 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
         }
       };
 
+      // Visual audio reset on end
       utterance.onend = () => {
         setIsSpeaking(false);
         activeUtteranceRef.current = null;
@@ -200,7 +170,6 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
       };
 
       utterance.onerror = (event) => {
-        // Ignore canceled/interrupted events
         if (event.error !== 'canceled' && event.error !== 'interrupted') {
           console.warn('Speech synthesis error:', event);
         }
@@ -217,10 +186,9 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
         (window as unknown as { __activeSpeechUtterance?: unknown }).__activeSpeechUtterance = utterance;
       } catch {}
 
-      // 3. DIRECT SYNCHRONOUS TRIGGER INSIDE USER GESTURE
+      // Direct trigger
       window.speechSynthesis.speak(utterance);
 
-      // Force resume if Android WebView stalled
       if (window.speechSynthesis.paused) {
         window.speechSynthesis.resume();
       }
@@ -230,9 +198,30 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
     }
   };
 
-  // Trigger Speech-to-Text (STT) Voice Recognition with robust permission check
+  // Trigger Speech-to-Text (STT) Voice Recognition with AudioContext unlock
   const toggleListening = async () => {
     setMicPermissionAlert(null);
+
+    // 1. FIRST TRIGGER AN AUDIO CONTEXT UNLOCK ON USER TOUCH/CLICK
+    try {
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (AudioCtx) {
+        const audioCtx = new AudioCtx();
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+        }
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        gain.gain.value = 0.001; // Silent/micro unlock tone
+        osc.frequency.value = 600;
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(0);
+        osc.stop(audioCtx.currentTime + 0.05);
+      }
+    } catch (e) {
+      console.warn('AudioContext unlock:', e);
+    }
 
     if (isListening) {
       if (recognitionRef.current) {
@@ -263,10 +252,11 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
       }
     }
 
-    const SpeechRecognition = (window as unknown as { SpeechRecognition?: any }).SpeechRecognition ||
-                              (window as unknown as { webkitSpeechRecognition?: any }).webkitSpeechRecognition;
+    // 2. INITIALIZE webkitSpeechRecognition OR SpeechRecognition
+    const SpeechRecognitionClass = (window as unknown as { SpeechRecognition?: any }).SpeechRecognition ||
+                                   (window as unknown as { webkitSpeechRecognition?: any }).webkitSpeechRecognition;
 
-    if (!SpeechRecognition) {
+    if (!SpeechRecognitionClass) {
       const alertMsg = lang === 'HI'
         ? '⚠️ कृपया माइक की अनुमति दें या Google Speech Services चालू करें। आप नीचे दिए गए सुझाव बटन या कीबोर्ड से भी प्रश्न पूछ सकते हैं।'
         : '⚠️ Microphone permission or Google Speech required. You can also tap the quick tags or type below.';
@@ -279,9 +269,8 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
 
     try {
       stopSpeaking();
-      playAudioCue(880, 150);
 
-      const recognition = new SpeechRecognition();
+      const recognition = new SpeechRecognitionClass();
       recognitionRef.current = recognition;
       recognition.lang = lang === 'HI' ? 'hi-IN' : 'en-IN';
       recognition.interimResults = false;
@@ -295,12 +284,14 @@ export const AiAgroDoctor: React.FC<AiAgroDoctorProps> = ({
         }
       };
 
+      // 3. LISTEN FOR onresult AND SET TRANSCRIBED TEXT DIRECTLY TO THE AGRO-DOCTOR SEARCH STATE
       recognition.onresult = (event: any) => {
         if (event.results && event.results[0] && event.results[0][0]) {
           const transcript = event.results[0][0].transcript;
+          // Set transcribed text directly to Agro-Doctor search state
           setDoctorQuery(transcript);
           setLastTranscribed(transcript);
-          playAudioCue(660, 100);
+          // Automatically trigger expert diagnosis
           handleAskDoctor(transcript, true);
         }
       };

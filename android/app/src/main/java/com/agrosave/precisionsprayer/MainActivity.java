@@ -39,12 +39,6 @@ public class MainActivity extends BridgeActivity {
                 @Override
                 public void onPermissionRequest(final PermissionRequest request) {
                     runOnUiThread(() -> {
-                        for (String resource : request.getResources()) {
-                            if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)) {
-                                request.grant(request.getResources());
-                                return;
-                            }
-                        }
                         request.grant(request.getResources());
                     });
                 }
