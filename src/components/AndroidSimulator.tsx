@@ -314,12 +314,17 @@ export const AndroidSimulator: React.FC<AndroidSimulatorProps> = ({
         {/* Primary App Bar with Language Toggle & Connection Status */}
         <div className="w-full px-3.5 py-2.5 flex items-center justify-between">
           <div>
-            <h1 className="font-bold text-[15px] tracking-wide leading-tight text-white">
-              {lang === 'HI' ? 'AGRO SAVE • स्मार्ट कृषि' : 'AGRO SAVE • Smart Agri'}
+            <h1 className="font-bold text-[15px] tracking-wide leading-tight text-white flex items-center space-x-1.5">
+              <span>{lang === 'HI' ? 'AGRO SAVE • स्मार्ट कृषि' : 'AGRO SAVE • Smart Agri'}</span>
             </h1>
             <p className="text-[10px] text-emerald-200 leading-tight">
               {lang === 'HI' ? 'एआई परिशुद्धता छिड़काव यंत्र' : 'AI Precision Sprayer | ESP32'}
             </p>
+            {/* Top Header Dedication Badge */}
+            <div className="mt-1 inline-flex items-center space-x-1 bg-amber-400/20 border border-amber-300/40 rounded-full px-2 py-0.5 text-[10px] font-bold text-amber-200">
+              <span>👑</span>
+              <span>Engineered & Designed by Anant Rathore</span>
+            </div>
           </div>
 
           {/* Language Switcher & Connection Pill */}
@@ -1103,6 +1108,39 @@ export const AndroidSimulator: React.FC<AndroidSimulatorProps> = ({
               </div>
               <div className="bg-[#FAFAFA] border border-neutral-200 rounded-lg p-2.5 text-[11px] text-neutral-700 font-mono">
                 {statusLog}
+              </div>
+            </div>
+
+            {/* DEDICATED CREATOR & INNOVATOR CARD: ANANT RATHORE */}
+            <div className="bg-gradient-to-br from-emerald-900 to-[#1B5E20] text-white rounded-xl p-3.5 shadow-md border border-emerald-500/30 relative overflow-hidden">
+              <div className="absolute -right-4 -bottom-4 w-24 h-24 bg-emerald-500/10 rounded-full blur-xl pointer-events-none" />
+              <div className="flex items-start justify-between">
+                <div>
+                  <div className="inline-flex items-center space-x-1 bg-amber-400 text-neutral-900 px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider mb-1.5 shadow-xs">
+                    <span>👑</span>
+                    <span>Official Dedicated Edition</span>
+                  </div>
+                  <h3 className="text-base font-bold text-white tracking-wide">
+                    Anant Rathore
+                  </h3>
+                  <p className="text-emerald-200 text-xs font-medium">
+                    Lead System Architect & Developer
+                  </p>
+                </div>
+                <div className="w-10 h-10 rounded-full bg-emerald-800/80 border border-emerald-400/40 flex items-center justify-center text-amber-300 font-bold text-sm shadow-inner shrink-0">
+                  AR
+                </div>
+              </div>
+
+              <div className="mt-3 pt-2.5 border-t border-emerald-800/80 grid grid-cols-2 gap-2 text-[11px]">
+                <div>
+                  <span className="text-emerald-300 block text-[9px] uppercase font-semibold">Project Vision:</span>
+                  <strong className="text-white">AGRO SAVE</strong>
+                </div>
+                <div>
+                  <span className="text-emerald-300 block text-[9px] uppercase font-semibold">Core Stack:</span>
+                  <span className="text-emerald-100 font-mono text-[10px]">ESP32, React Native, AI & Voice</span>
+                </div>
               </div>
             </div>
 
