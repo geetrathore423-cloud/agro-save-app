@@ -1,22 +1,3 @@
-{/* App Creator & Dedicated Information Section */}
-<div className="my-3 p-4 bg-emerald-900 text-white rounded-2xl shadow-md border border-emerald-700 text-center">
-  <div className="inline-block bg-emerald-700/80 text-emerald-100 text-xs font-bold px-3 py-1 rounded-full mb-2">
-    👑 Official Creator & System Developer
-  </div>
-  <h2 className="text-xl font-extrabold tracking-wide text-white">
-    App Made By Anant Rathore
-  </h2>
-  <p className="text-xs text-emerald-200 mt-1 font-medium">
-    Lead Innovator & System Architect
-  </p>
-
-  <div className="mt-3 pt-3 border-t border-emerald-800 text-left text-xs text-emerald-100 space-y-1">
-    <p>🚀 <b>Project:</b> AGRO SAVE (Automated Pesticide Sprayer System)</p>
-    <p>🤖 <b>Tech Integration:</b> ESP32-CAM Hardware, AI Agro-Doctor & Native Voice Assistant</p>
-    <p>🎓 <b>Developed By:</b> Anant Rathore</p>
-  </div>
-</div>
-
 import React, { useState, useEffect } from 'react';
 import { AndroidSimulator } from './components/AndroidSimulator';
 import { NetworkLog } from './types';
