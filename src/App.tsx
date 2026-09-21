@@ -1,3 +1,9 @@
+<div className="text-center my-2">
+  <span className="bg-emerald-100 text-emerald-800 text-xs font-semibold px-3 py-1 rounded-full border border-emerald-300">
+    👑 Engineered & Designed by Anant Rathore
+  </span>
+</div>
+
 import React, { useState, useEffect } from 'react';
 import { AndroidSimulator } from './components/AndroidSimulator';
 import { NetworkLog } from './types';
